@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Kane141
+Comment=Linux Game Center
+Exec=Kane141
+Icon=Kane141
+Terminal=false
+Categories=Game;
