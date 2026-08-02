@@ -1,40 +1,28 @@
-import glob
+import threading
+
 from kivymd.uix.label import MDLabel
 from kivymd.uix.card import MDCard
 from kivy.uix.image import AsyncImage
 from kivymd.uix.dialog import MDDialog
-from kivymd.uix.button import MDIconButton, MDRaisedButton
-from kivymd.uix.boxlayout import MDBoxLayout
+from kivymd.uix.button import MDRaisedButton
 from kivymd.color_definitions import colors
 from kivymd.toast.kivytoast.kivytoast import toast
-from kivymd.uix.screenmanager import MDScreenManager
-
+from kivy.core.clipboard import Clipboard
 from kivy.clock import Clock
 from kivy.utils import get_color_from_hex
-from database.database import GamesInfo
-from utils import get_settings
-from database import Database
-import os
-import html
 
-from utils.fetch_feed import NO_COVER
 from widgets.border import BorderBehavior
-
-
-db = Database("games.db")
-
-settings = get_settings()
+from utils import get_system_requirements
 
 
 class GameCard(MDCard, BorderBehavior):
-    def __init__(self, game_obj, qbt_client, **kwargs):
+    def __init__(self, game_obj, **kwargs):
         super().__init__(**kwargs)
         
         self.borders = (1, 'solid', get_color_from_hex(colors["BlueGray"]["600"]))
         
         self.game_obj = game_obj
         
-        self.qbt_client = qbt_client
         self.orientation = "vertical"
         self.size_hint = (None, None)
         self.size = (200, 300)
@@ -50,162 +38,43 @@ class GameCard(MDCard, BorderBehavior):
                 
     def on_press(self):
         
-        text = f"Description: \n{self.game_obj.description}\n\n" \
+        self.base_text = f"Description: \n{self.game_obj.description}\n\n" \
                 f"Size: {self.game_obj.size}\n\n" \
-                f"Platform: {self.game_obj.platform.title()}\n\n"
+                f"Platform: {self.game_obj.platform.title()}\n\n" \
+                f"Minimum Requirements: Fetching from Steam..."
         
-        qbt_connected = self.qbt_client.is_connected()
-        
-        dia = MDDialog(title=self.game_obj.name, 
-                       text=text,
+        self.dia = MDDialog(title=self.game_obj.name, 
+                       text=self.base_text,
                        buttons=[
-                           MDRaisedButton(text="Download" if qbt_connected else "Please connect to Qbittorrent to download", on_press=self.download, disabled=not qbt_connected),
+                           MDRaisedButton(text="Copy Magnet Link", on_press=self.copy_magnet),
                         ],
                        )
         
-        dia.open()
-        
-        
-    def download(self, instance):
-        self.qbt_client.download(self.magnet)
-        instance.text = "Downloading..."
-        toast(f"Downloading {self.game_obj.name} ...", duration=3.0)
-        instance.disabled = True
-        
-        screen_manager = None
-        iterator = self.walk_reverse(loopback=False)
-        while type(screen_manager) is not MDScreenManager:
-            screen_manager = next(iterator)
-        library = screen_manager.get_screen("Library")
-        library.update_library()
-        
+        self.dia.open()
 
+        # fetch requirements in the background so the UI doesn't freeze
+        threading.Thread(target=self.fetch_requirements, daemon=True).start()
+        
+        
+    def copy_magnet(self, instance):
+        Clipboard.copy(self.magnet)
+        toast(f"Copied magnet link for {self.game_obj.name}", duration=3.0)
 
-class GameLibraryCard(MDCard, BorderBehavior):
-    def __init__(self, game_torrent, qbt_client, **kwargs):
-        super().__init__(**kwargs)
-        
-        self.borders = (1, 'solid', get_color_from_hex(colors["BlueGray"]["600"]))
-        
-        self.qbt_client = qbt_client
-        
-        self.game_name = str(game_torrent.name).split("-")[0]
-        self.game_obj = self.query_game(self.game_name)
-        self.save_path = game_torrent.content_path
-        if self.game_obj is None:
-            if self.is_launchable():
-                self.game_obj = GamesInfo(self.game_name, NO_COVER, "")
-            else:
-                return
+    def fetch_requirements(self):
+        reqs = get_system_requirements(self.game_obj.name)
+        # UI updates must happen on the main thread
+        Clock.schedule_once(lambda dt: self.update_requirements(reqs))
 
-        
-        self.torr = None
-        self.magnet = game_torrent.magnet_uri
-        self.cover_link = self.game_obj.cover
-        self.status = game_torrent.state
-        
-        self.orientation = "vertical"
-        self.size_hint = (None, None)
-        self.size = (200, 300)
-        
-        self.md_bg_color = "#00000000"
-        
-        self.cover = AsyncImage(source=self.cover_link, size_hint=(0.9, 0.9), pos_hint={"center_x":0.5, "center_y":0.5})
-        self.add_widget(self.cover)
-        
-        self.buttons = MDBoxLayout(orientation="horizontal", size_hint=(1, 0.1), pos_hint={"center_x":0.5, "center_y":0.5})
-        
-        self.run_btn = MDIconButton(icon="play", on_press=self.launch_game)
-        self.buttons.add_widget(self.run_btn)
-        
-                
-        
-        self.manage_dialog = MDDialog(title=self.game_obj.name,
-                            text=" ",
-                            buttons=[
-                                MDRaisedButton(text="Open Location", on_press=self.open_location),
-                                MDRaisedButton(text="Pause", on_press=lambda x: self.qbt_client.pause(self.magnet)),
-                                MDRaisedButton(text="Resume", on_press=lambda x: self.qbt_client.resume(self.magnet)),
-                                MDRaisedButton(text="Delete", on_press=lambda x: self.delete(self.magnet), md_bg_color=colors["Red"]["500"]),
-                                MDRaisedButton(text="Close", on_press=lambda x: self.dismiss_dialog())
-                                ])
-        
-        self.manage_btn = MDIconButton(icon="file-cog", on_press=lambda x: self.manage_dialog.open())
-        self.buttons.add_widget(self.manage_btn)
-        
-        self.add_widget(self.buttons)
+    def update_requirements(self, reqs):
+        # dialog may have been closed/discarded already, nothing to update
+        if not hasattr(self, "dia"):
+            return
 
-        
-        self.disabled_states = ["metaDL", "pausedDL", "queuedDL", "stalledDL", "checkingDL", "forcedDL", "downloading"]
-        
-        self.clock = Clock.schedule_interval(self.update_status, 5)
-        
-        
-    def update_status(self, dt=None):
-            
-            connected = self.qbt_client.is_connected()
-            
-            for i in range(1, len(self.manage_dialog.buttons) - 1):
-                self.manage_dialog.buttons[i].disabled = not connected
-            
-            if not connected:
-                text = "qBittorrent not connected, please connect ..."
-                self.manage_dialog.text = text
-                return
-            
-            self.torr = self.qbt_client.get_torrent(self.magnet)
-            
-            progress = f"{self.torr.progress*100:.1f}%"
-            speed = f"{self.torr.dlspeed//1000} KB/s"
-            eta = self.torr.eta//60
-            eta = f"{eta} min" if eta != 144000 else "∞"
-            text = f"State: {self.torr.state}\n" \
-                    f"Download Progress: {progress}\n" \
-                    f"Download Speed: {speed}\n" \
-                    f"ETA: {eta}\n"
-                    
-            self.manage_dialog.text = text 
-            
-            if self.torr.state in self.disabled_states:
-                self.run_btn.disabled = True
-                if self.torr.state == "downloading":
-                    self.save_path = self.torr.content_path
-            else:
-                self.run_btn.disabled = False
-    
-    def launch_game(self, instance):
-        os.system(f"cd {self.save_path} && chmod +x start* && ./start* &")
+        header = f"Description: \n{self.game_obj.description}\n\n" \
+                f"Size: {self.game_obj.size}\n\n" \
+                f"Platform: {self.game_obj.platform.title()}\n\n"
 
-    def is_launchable(self) -> bool:
-        return len(glob.glob(f"{self.save_path}/start*")) > 1
-        
-    def open_location(self, instance):
-        os.system(f"xdg-open {self.save_path} &")
-        
-    def dismiss_dialog(self):
-        self.manage_dialog.dismiss()
-        
-    def query_game(self, name):
-        name = html.unescape(name)
-        query_result = db.get_library_game(name)
-        if len(query_result) == 1:
-            return query_result[0]
-        
-        for q in query_result:
-            if q.name.strip() == name.strip():
-                return q
-            
-        partial_name = name.split(" ")
-        partial_name = partial_name[:len(partial_name)//2]
-        partial_name = " ".join(partial_name)
-        result_list = db.get_library_game(partial_name)
-        if len(result_list) == 0:
-            return None
-        else: 
-            return result_list[0]
-    
-    def delete(self, magnet):
-        self.clock.cancel()
-        self.qbt_client.delete(magnet, delete_files=True)
-        self.manage_dialog.dismiss()
-        self.parent.remove_widget(self)
+        if reqs:
+            self.dia.text = f"{header}Minimum Requirements:\n{reqs}"
+        else:
+            self.dia.text = f"{header}System Requirements: Not found on Steam"

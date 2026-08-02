@@ -19,7 +19,7 @@ def get_settings_template():
 def write_settings(settings):
     
     user_name = getpass.getuser()
-    config_path = f"/home/{user_name}/.config/undertaker141"
+    config_path = f"/home/{user_name}/.config/kane141"
     
     settings_path = os.path.join(config_path, "settings.yaml")
     
@@ -28,7 +28,7 @@ def write_settings(settings):
         
 def check_config():
     user_name = getpass.getuser()
-    config_path = f"/home/{user_name}/.config/undertaker141"
+    config_path = f"/home/{user_name}/.config/kane141"
     
     # Check if config directory exists
     if not os.path.exists(config_path):
@@ -44,7 +44,7 @@ def check_config():
         
 def get_settings():
     user_name = getpass.getuser()
-    config_path = f"/home/{user_name}/.config/undertaker141"
+    config_path = f"/home/{user_name}/.config/kane141"
     
     settings_path = os.path.join(config_path, "settings.yaml")
     
@@ -53,7 +53,7 @@ def get_settings():
     
 def check_database():
     user_name = getpass.getuser()
-    config_path = f"/home/{user_name}/.config/undertaker141"
+    config_path = f"/home/{user_name}/.config/kane141"
     
     db_file_path = os.path.join(config_path, "games.db")
     
@@ -71,7 +71,11 @@ def check_database():
             f.write(db_template)
 
 def get_latest_release():
-    g = Github()
-    latest_release = g.get_repo("AbdelrhmanNile/UnderTaker141").get_latest_release()
-    link = latest_release.url
-    return latest_release.name, link
+    try:
+        g = Github()
+        latest_release = g.get_repo("MustafaSofi/Kane141").get_latest_release()
+        link = latest_release.url
+        return latest_release.name, link
+    except Exception as e:
+        print(f"Could not check for latest release: {e}")
+        return None, None

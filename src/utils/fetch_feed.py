@@ -201,6 +201,3 @@ class ReleasesFeed:
             except KeyError:
                 continue
         print("updating db done")
-
-
-      

@@ -361,4 +361,3 @@ class JohnCena141Scraper:
             json_array.extend(results[i])
         
         return json_array
-    

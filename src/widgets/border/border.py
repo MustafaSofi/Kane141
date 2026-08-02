@@ -122,5 +122,3 @@ class BorderBehavior(Widget):
         self.cur_dash_style = self.dash_styles[self.line_style]
         self.set_border_origin()
         self.draw_border()
-
-    

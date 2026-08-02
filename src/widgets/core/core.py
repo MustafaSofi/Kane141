@@ -8,9 +8,8 @@ from kivy.uix.screenmanager import FadeTransition
 from kivymd.uix.navigationdrawer import MDNavigationLayout
 from kivymd.color_definitions import colors
 from kivymd.toast.kivytoast.kivytoast import toast
-from kivy.clock import Clock
 from widgets.navigation import Rail
-from utils import JCQbt, get_settings, get_latest_release
+from utils import get_latest_release
 from .plugin import Plugin, PluginData
 
 from importlib import import_module
@@ -21,14 +20,6 @@ class MainScreen(MDScreen):
     def __init__(self, version, **kwargs):
         super().__init__(**kwargs)
         self.version = version
-        
-        settings = get_settings()
-        self.qbt_client = JCQbt(settings["qbittorrent_api"]["host"],
-                                settings["qbittorrent_api"]["port"],
-                                settings["qbittorrent_api"]["username"],
-                                settings["qbittorrent_api"]["password"],
-                                settings["general"]["save_path"])
-                                
         
         self.plugins = self.load_plugins()
         
@@ -44,7 +35,7 @@ class MainScreen(MDScreen):
         self.boxlayout1 = MDBoxLayout(orientation="vertical", id="core_boxlayout")
         
         self.boxlayout2 = MDBoxLayout(adaptive_height=True, padding="12dp", md_bg_color=colors["BlueGray"]["700"], id="header_boxlayout")
-        self.title_version = MDLabel(text=f"UnderTaker141 {version}", adaptive_height=True, pos_hint={"center_y": 0.5}, id="title_label")
+        self.title_version = MDLabel(text=f"Kane141 {version}", adaptive_height=True, pos_hint={"center_y": 0.5}, id="title_label")
         self.boxlayout2.add_widget(self.title_version)
         
         
@@ -69,14 +60,10 @@ class MainScreen(MDScreen):
         
         self.add_widget(self.nav_layout)
         
-        self.qbt_checker = Clock.schedule_interval(self.update_qbt_status, 5)
-        
         latest_release = get_latest_release()
         if latest_release[0] is not None:
             if latest_release[0] != self.version:
                 toast(f"New Release Availble: {latest_release[0]}\n{latest_release[1]}", duration=5.0)
-        else:
-            toast("No Internet Connection", duration=5.0)
         
         
     def load_plugins(self) -> dict: # load plugins from plugins.yaml
@@ -123,18 +110,5 @@ class MainScreen(MDScreen):
     def load_screens(self): # load all the screens and add them to the screen manager
         for plugin in self.plugins:
             screen_class = plugin.class_
-            screen = screen_class(name=plugin.name, qbt_client=self.qbt_client) # create instance of a screen class
+            screen = screen_class(name=plugin.name) # create instance of a screen class
             self.screen_manager_content.add_widget(screen) # add the screen to the screen manager
-            
-
-    
-    def update_qbt_status(self, dt=None):
-        
-        connected = self.qbt_client.connected
-        if connected:
-            self.title_version.text = f"UnderTaker141 {self.version}"
-            self.boxlayout2.md_bg_color = colors["BlueGray"]["700"]
-        else:
-            self.title_version.text = "Qbittorrent not connected"
-            self.boxlayout2.md_bg_color = colors["Red"]["700"]
-            

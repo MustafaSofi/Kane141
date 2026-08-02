@@ -39,7 +39,7 @@ jobs:
       uses: marvinpinto/action-automatic-releases@latest
       with:
         repo_token: ${{ secrets.GITHUB_TOKEN }}
-        title: "${{ steps.tag.outputs.tag }}: UnderTaker141"
+        title: "${{ steps.tag.outputs.tag }}: Kane141"
         prerelease: false
         automatic_release_tag: "latest"
         files: |

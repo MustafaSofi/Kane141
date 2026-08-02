@@ -57,7 +57,7 @@ class Database:
     def __init__(self, db_file):
         self.db_file = db_file
         
-        db_file_path = f"/home/{getpass.getuser()}/.config/undertaker141/{db_file}"
+        db_file_path = f"/home/{getpass.getuser()}/.config/kane141/{db_file}"
         
         self.engine = create_engine(f'sqlite:///{db_file_path}', echo=False)
         self.session = sessionmaker(bind=self.engine)()
@@ -98,6 +98,18 @@ class Database:
         if n > self.count_games():
             return self.get_games()
         return self.session.query(Game).order_by(func.random()).limit(n).all()
+    
+    # get a page of games, ordered by id, for paginated views
+    def get_games_page(self, offset, limit):
+        return self.session.query(Game).order_by(Game.id).offset(offset).limit(limit).all()
+    
+    # get a page of games matching a search term
+    def get_game_page(self, name, offset, limit):
+        return self.session.query(Game).filter(Game.name.ilike(f'%{name}%')).order_by(Game.id).offset(offset).limit(limit).all()
+    
+    # count games matching a search term, used to compute total pages
+    def count_game_search(self, name):
+        return self.session.query(Game).filter(Game.name.ilike(f'%{name}%')).count()
     
     def delete_game(self, name):
         game = self.get_game(name)

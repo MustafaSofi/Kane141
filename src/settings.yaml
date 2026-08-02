@@ -3,8 +3,3 @@ general:
 igdb:
   twitch_client_id: youridhere
   twitch_client_secret: yoursecrethere
-qbittorrent_api:
-  host: localhost
-  password: adminadmin
-  port: 8080
-  username: admin
