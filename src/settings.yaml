@@ -1,5 +1,2 @@
 general:
   save_path: /home/pirate/Downloads
-igdb:
-  twitch_client_id: youridhere
-  twitch_client_secret: yoursecrethere

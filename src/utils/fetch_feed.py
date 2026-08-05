@@ -1,31 +1,18 @@
 import requests
 import json
 from .thread_with_return import ThreadWithReturnValue
-from igdb.wrapper import IGDBWrapper
+from .steam_metadata import get_cover_and_summary as steam_get_cover_and_summary, NO_COVER
 import os
 import numpy as np
 import time
 import unidecode
 
-NO_COVER = "https://images.igdb.com/igdb/image/upload/t_cover_big_2x/nocover.png"
-
 class ReleasesFeed:
-    def __init__(self,
-                 twitch_client_id,
-                 twitch_client_secret,
-                 db_object):
+    def __init__(self, db_object):
         
-        self.twitch_client_id = twitch_client_id
-        self.twitch_client_secret = twitch_client_secret
         self.db = db_object
         
         self.feed_json_url = "https://github.com/jc141x/releases-feed/releases/latest/download/releases.json"
- 
-        r = requests.post(f"https://id.twitch.tv/oauth2/token?client_id={self.twitch_client_id}&client_secret={self.twitch_client_secret}&grant_type=client_credentials")
-        
-        access_token = json.loads(r._content)["access_token"]
-
-        self.igdb_wrapper = IGDBWrapper(f"{self.twitch_client_id}", access_token)
         
     
     def pipeline(self):
@@ -40,7 +27,18 @@ class ReleasesFeed:
     
     def get_latest_feed(self):
         r = requests.get(self.feed_json_url)
-        return r.json()
+        if r.status_code != 200:
+            raise RuntimeError(
+                f"Could not fetch the releases feed (HTTP {r.status_code}). "
+                f"jc141x's releases-feed may be temporarily down -- try again later."
+            )
+        try:
+            return r.json()
+        except json.JSONDecodeError:
+            raise RuntimeError(
+                "The releases feed did not return valid data. "
+                "jc141x's releases-feed may be temporarily down -- try again later."
+            )
     
     def format_feed(self, feed):
         
@@ -71,43 +69,9 @@ class ReleasesFeed:
             if game_info.cover is not None:
                 return game_info.cover, game_info.description
         
-        time.sleep(2)
-        
-        # JSON API request
-        try:
-            byte_array = self.igdb_wrapper.api_request(
-                "games", f'search "{unidecode.unidecode(game)}"; fields cover, summary; offset 0;'
-            )
-        # parse into JSON however you like...
-        except:
-            print(game)
-            return
-        data = json.loads(byte_array)
-        #print(data)
+        time.sleep(0.5)
 
-        if len(data) == 0:
-            return NO_COVER, "No summary available"
-        
-        try:
-            cover_id = int(data[0]["cover"])
-            game_summary = data[0]["summary"]
-        except KeyError:
-            
-            try:
-                cover_id = int(data[1]["cover"])
-                game_summary = data[1]["summary"]
-            except Exception:
-                return NO_COVER, "No summary available"        
-        
-        # cover url 
-        byte_array = self.igdb_wrapper.api_request(
-            "covers", f"fields url; where id = {cover_id};"
-        )
-        
-        data = json.loads(byte_array)
-        cover_url = "https:" + str(data[0]["url"]).replace("thumb", "1080p") 
-        
-        return cover_url, game_summary
+        return steam_get_cover_and_summary(unidecode.unidecode(game))
 
     def update_game_records(self, json_array):
                 

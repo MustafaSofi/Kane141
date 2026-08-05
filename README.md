@@ -6,7 +6,7 @@ This project is for educational purposes only, do not use it against any law or 
 
 <h1 align="center">Kane141</h1>
 
-Kane141 is a free and open source game center for Linux, forked from [UnderTaker141](https://github.com/AbdelrhmanNile/UnderTaker141). It fetches all the repacks uploaded by [johncena141](https://1337x.to/user/johncena141/) on 1337x, then fetches their summary and cover art from [IGDB](igdb.com) and displays them in a "nice" UI :3.
+Kane141 is a free and open source game center for Linux, forked from [UnderTaker141](https://github.com/AbdelrhmanNile/UnderTaker141). It fetches all the repacks uploaded by [johncena141](https://1337x.to/user/johncena141/) on 1337x, then fetches their summary and cover art from Steam's public store API and displays them in a "nice" UI :3.
 
 Browse games with a paginated grid, and copy a game's magnet link straight from the app — bring your own torrent client to download it.
 
@@ -30,10 +30,7 @@ python3 app.py
 ```
 
 # Configuration
-After you run the app, head to the settings tab.
-
-## IGDB
-- Create a Twitch API app and get a client ID and secret from [here](https://dev.twitch.tv/console/apps/create)
+No API keys or accounts needed -- cover art, descriptions, and system requirements are all pulled from Steam's public store API.
 
 # Updating the database
 To update the database and fetch new releases by johncena141, head to the settings tab and click on the "Update database" button. This will take a few minutes and will freeze the app, just wait until it finishes and everything will return to normal.

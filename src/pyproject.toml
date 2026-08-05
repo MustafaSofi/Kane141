@@ -11,11 +11,11 @@ python = "^3.11"
 kivymd = "^1.1.1"
 pyaml = "^23.7.0"
 sqlalchemy = "^2.0.20"
-igdb-api-v4 = "^0.2.0"
 beautifulsoup4 = "^4.12.2"
 pandas = "^2.2.3"
 requests = "^2.31.0"
 lxml = "^5.3.0"
+cloudscraper = "^1.2.71"
 unidecode = "^1.4.0"
 
 

@@ -2,6 +2,8 @@ import threading
 
 from kivymd.uix.label import MDLabel
 from kivymd.uix.card import MDCard
+from kivymd.uix.boxlayout import MDBoxLayout
+from kivymd.uix.scrollview import MDScrollView
 from kivy.uix.image import AsyncImage
 from kivymd.uix.dialog import MDDialog
 from kivymd.uix.button import MDRaisedButton
@@ -10,6 +12,7 @@ from kivymd.toast.kivytoast.kivytoast import toast
 from kivy.core.clipboard import Clipboard
 from kivy.clock import Clock
 from kivy.utils import get_color_from_hex
+from kivy.metrics import dp
 
 from widgets.border import BorderBehavior
 from utils import get_system_requirements
@@ -29,27 +32,64 @@ class GameCard(MDCard, BorderBehavior):
         
         self.md_bg_color = "#00000000"
         
-        self.name = MDLabel(text=game_obj.name if len(game_obj.name) < 22 else game_obj.name[:20] + "..", halign="left", size_hint=(1, 0.1), padding=(5, 0))
+        # name (left) + size (right) on the same row
+        self.info_row = MDBoxLayout(orientation="horizontal", size_hint=(1, 0.1), padding=(5, 0))
+        
+        self.name = MDLabel(
+            text=game_obj.name if len(game_obj.name) < 18 else game_obj.name[:16] + "..",
+            halign="left",
+            size_hint_x=0.65,
+        )
+        self.size_tag = MDLabel(
+            text=game_obj.size,
+            halign="right",
+            size_hint_x=0.35,
+            theme_text_color="Secondary",
+            font_style="Caption",
+        )
+        self.info_row.add_widget(self.name)
+        self.info_row.add_widget(self.size_tag)
+        
         self.cover = AsyncImage(source=game_obj.cover, size_hint=(0.9, 0.9), pos_hint={"center_x":0.5, "center_y":0.5})
         self.magnet = game_obj.magnet 
         
         self.add_widget(self.cover)
-        self.add_widget(self.name)
+        self.add_widget(self.info_row)
                 
     def on_press(self):
-        
-        self.base_text = f"Description: \n{self.game_obj.description}\n\n" \
+
+        header = f"Description: \n{self.game_obj.description}\n\n" \
                 f"Size: {self.game_obj.size}\n\n" \
-                f"Platform: {self.game_obj.platform.title()}\n\n" \
-                f"Minimum Requirements: Fetching from Steam..."
-        
-        self.dia = MDDialog(title=self.game_obj.name, 
-                       text=self.base_text,
-                       buttons=[
-                           MDRaisedButton(text="Copy Magnet Link", on_press=self.copy_magnet),
-                        ],
-                       )
-        
+                f"Platform: {self.game_obj.platform.title()}\n\n"
+
+        # persistent label whose text we update in place -- the dialog frame
+        # and its buttons are never rebuilt, so the button stays clickable
+        self.info_label = MDLabel(
+            text=header + "Minimum Requirements: Fetching from Steam...",
+            halign="left",
+            valign="top",
+            size_hint_y=None,
+        )
+        self.info_label.bind(
+            width=lambda inst, val: setattr(inst, "text_size", (val, None)),
+            texture_size=lambda inst, val: setattr(inst, "height", val[1]),
+        )
+
+        scroll = MDScrollView(size_hint_y=None, height=dp(320))
+        scroll.add_widget(self.info_label)
+
+        content = MDBoxLayout(orientation="vertical", size_hint_y=None, height=dp(320))
+        content.add_widget(scroll)
+
+        self.dia = MDDialog(
+            title=self.game_obj.name,
+            type="custom",
+            content_cls=content,
+            buttons=[
+                MDRaisedButton(text="Copy Magnet Link", on_press=self.copy_magnet),
+            ],
+        )
+
         self.dia.open()
 
         # fetch requirements in the background so the UI doesn't freeze
@@ -67,7 +107,7 @@ class GameCard(MDCard, BorderBehavior):
 
     def update_requirements(self, reqs):
         # dialog may have been closed/discarded already, nothing to update
-        if not hasattr(self, "dia"):
+        if not hasattr(self, "info_label"):
             return
 
         header = f"Description: \n{self.game_obj.description}\n\n" \
@@ -75,6 +115,6 @@ class GameCard(MDCard, BorderBehavior):
                 f"Platform: {self.game_obj.platform.title()}\n\n"
 
         if reqs:
-            self.dia.text = f"{header}Minimum Requirements:\n{reqs}"
+            self.info_label.text = f"{header}Minimum Requirements:\n{reqs}"
         else:
-            self.dia.text = f"{header}System Requirements: Not found on Steam"
+            self.info_label.text = f"{header}Minimum Requirements: Not found on Steam"
