@@ -19,6 +19,13 @@ import re
 
 DEBUGGING = False
 
+# a page returning 0 items could be the genuine end of the archive, or a
+# transient block/soft-fail on that one page -- require this many
+# consecutive empty/failed pages before concluding it's really the end
+CONSECUTIVE_EMPTY_PAGES_TO_STOP = 3
+# retries for a single page request before giving up on it
+MAX_RETRIES_PER_PAGE = 3
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -103,7 +110,7 @@ class JohnCena141Scraper:
         for mirror in MIRRORS:
             try:
                 resp = self.session.get(
-                    f"{mirror}/johncena141-torrents/1/", timeout=10
+                    f"{mirror}/user/johncena141/1/", timeout=10
                 )
                 if resp.status_code != 200:
                     print(f"Mirror {mirror} returned HTTP {resp.status_code}, trying next...")
@@ -135,7 +142,7 @@ class JohnCena141Scraper:
         the real stopping condition is an empty page in run(), not this
         number.
         """
-        link = f"{self.mirror_base}/johncena141-torrents/1/"
+        link = f"{self.mirror_base}/user/johncena141/1/"
         page = self.session.get(link, timeout=15)
 
         if page.status_code != 200:
@@ -149,7 +156,7 @@ class JohnCena141Scraper:
         if last_page_element is not None:
             href = last_page_element.find("a")
             if href is not None and href.get("href"):
-                match = re.findall(r"/johncena141-torrents/([0-9]+)/", href["href"])
+                match = re.findall(r"/user/johncena141/([0-9]+)/", href["href"])
                 if match:
                     return int(match[0])
 
@@ -231,22 +238,45 @@ class JohnCena141Scraper:
 
     def run(self):
         print("scrapping for games")
+        consecutive_empty_pages = 0
 
         while True:
             if self.start_page_num == self.page_limit:
                 self._finish()
                 return
             else:
-                page_resp = self.session.get(
-                    f"{self.mirror_base}/johncena141-torrents/{self.start_page_num}/",
-                    timeout=15,
-                )
-                if page_resp.status_code != 200:
-                    raise RuntimeError(
-                        f"1337x returned HTTP {page_resp.status_code} on page "
-                        f"{self.start_page_num} -- it may be rate-limiting or "
-                        f"blocking the scrape. Try again later."
-                    )
+                page_url = f"{self.mirror_base}/user/johncena141/{self.start_page_num}/"
+                page_resp = None
+                for attempt in range(1, MAX_RETRIES_PER_PAGE + 1):
+                    try:
+                        resp = self.session.get(page_url, timeout=15)
+                        if resp.status_code == 200:
+                            page_resp = resp
+                            break
+                        print(f"page {self.start_page_num}: HTTP {resp.status_code} "
+                              f"(attempt {attempt}/{MAX_RETRIES_PER_PAGE}), retrying...")
+                    except Exception as e:
+                        print(f"page {self.start_page_num}: request failed ({e}) "
+                              f"(attempt {attempt}/{MAX_RETRIES_PER_PAGE}), retrying...")
+                    if attempt < MAX_RETRIES_PER_PAGE:
+                        time.sleep(0.5 * attempt)
+
+                if page_resp is None:
+                    # couldn't get this page at all after retries -- count it
+                    # toward the consecutive-empty-page stop condition rather
+                    # than immediately raising, since it may just be one bad
+                    # page in the middle of a real archive
+                    consecutive_empty_pages += 1
+                    print(f"page {self.start_page_num}: giving up after "
+                          f"{MAX_RETRIES_PER_PAGE} attempts ({consecutive_empty_pages} "
+                          f"consecutive failed/empty pages)")
+                    if consecutive_empty_pages >= CONSECUTIVE_EMPTY_PAGES_TO_STOP:
+                        print(f"stopping: {consecutive_empty_pages} consecutive failed pages")
+                        self._finish()
+                        return
+                    self.start_page_num += 1
+                    continue
+
                 soup = BeautifulSoup(page_resp.content, "lxml")
 
                 # scan the whole page for torrent links rather than relying
@@ -265,11 +295,17 @@ class JohnCena141Scraper:
                             "this mirror's layout may not match what the "
                             "scraper expects, or the request was blocked."
                         )
-                    # later pages with nothing found just means we've paged
-                    # past the end of johncena141's uploads
-                    print(f"No more results after page {self.start_page_num - 1} -- done.")
-                    self._finish()
-                    return
+                    consecutive_empty_pages += 1
+                    print(f"page {self.start_page_num}: 0 torrent links "
+                          f"({consecutive_empty_pages} consecutive empty pages)")
+                    if consecutive_empty_pages >= CONSECUTIVE_EMPTY_PAGES_TO_STOP:
+                        print(f"No more results after page {self.start_page_num - consecutive_empty_pages} -- done.")
+                        self._finish()
+                        return
+                    self.start_page_num += 1
+                    continue
+                else:
+                    consecutive_empty_pages = 0
 
                 # split array for parralel scraping
                 self.splitarr = np.array_split(self.urllist, 3)
@@ -367,13 +403,20 @@ class JohnCena141Scraper:
                 
         num = len(json_array)
         
-        # udate platform info
+        # update platform info -- check the game's own name/title, not the
+        # magnet link (whether "Wine"/"Native" text survives into the
+        # magnet's dn= field is inconsistent and unreliable). Default to
+        # "unknown" rather than leaving it unset, since push_to_db no
+        # longer drops games without a recognized platform.
         for i in range(num):
             try:
-                if "Wine" in json_array[i]["magnet"]:
+                name_lower = json_array[i]["name"].lower()
+                if "gnu/ wine" in name_lower or "gnu/wine" in name_lower:
                     json_array[i]["pltfrm"] = "wine"
-                elif "Native" in json_array[i]["magnet"]:
+                elif "gnu/ native" in name_lower or "gnu/native" in name_lower:
                     json_array[i]["pltfrm"] = "native"
+                else:
+                    json_array[i]["pltfrm"] = "unknown"
             except KeyError:
                 continue
 
@@ -413,15 +456,14 @@ class JohnCena141Scraper:
         
         for i in range(num):
             try:
-                if json_array[i]["pltfrm"] == "wine" or json_array[i]["pltfrm"] == "native":
-                    self.db.add_game(
-                        json_array[i]["name"],
-                        json_array[i]["cover"],
-                        json_array[i]["size"],
-                        json_array[i]["magnet"],
-                        json_array[i]["pltfrm"],
-                        json_array[i]["summary"],
-                    )
+                self.db.add_game(
+                    json_array[i]["name"],
+                    json_array[i]["cover"],
+                    json_array[i]["size"],
+                    json_array[i]["magnet"],
+                    json_array[i]["pltfrm"],
+                    json_array[i]["summary"],
+                )
             except KeyError:
                 continue
         print("pushing to db done")
