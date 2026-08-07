@@ -2,11 +2,10 @@
 ORM for the database
 """
 
-from sqlalchemy import create_engine, ForeignKey, Column, Integer, String, func
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-import pandas as pd
+from sqlalchemy import create_engine, Column, Integer, String, func
+from sqlalchemy.orm import declarative_base, sessionmaker
 import getpass
+import os
 
 Base = declarative_base()
 
@@ -36,7 +35,7 @@ class GamesInfo(Base):
     __tablename__ = 'games_info'
     
     id = Column(Integer, primary_key=True)
-    name = Column(String)
+    name = Column(String, index=True)
     cover = Column(String)
     description = Column(String)
     
@@ -52,35 +51,91 @@ class GamesInfo(Base):
 
 class Database:
     """
-    Interface for the database
+    Interface for the database with batch transaction optimizations.
     """
     def __init__(self, db_file):
         self.db_file = db_file
+        user_name = getpass.getuser()
+        config_path = f"/home/{user_name}/.config/kane141"
+        os.makedirs(config_path, exist_ok=True)
+        db_file_path = os.path.join(config_path, db_file)
         
-        db_file_path = f"/home/{getpass.getuser()}/.config/kane141/{db_file}"
-        
-        self.engine = create_engine(f'sqlite:///{db_file_path}', echo=False)
-        self.session = sessionmaker(bind=self.engine)()
+        self.engine = create_engine(
+            f'sqlite:///{db_file_path}', 
+            echo=False,
+            connect_args={"check_same_thread": False}
+        )
+        self.Session = sessionmaker(bind=self.engine)
+        self.session = self.Session()
         Base.metadata.create_all(self.engine)
         
+    def add_games_batch(self, game_dicts):
+        """Batch insert or update games and metadata in a single transaction."""
+        if not game_dicts:
+            return
+
+        session = self.Session()
+        try:
+            # Load existing GamesInfo records into memory for fast lookup
+            existing_info = {gi.name.lower(): gi for gi in session.query(GamesInfo).all()}
+            
+            games_to_add = []
+            info_to_add = []
+
+            for item in game_dicts:
+                name = item.get("name", "")
+                cover = item.get("cover")
+                size = item.get("size", "")
+                magnet = item.get("magnet", "")
+                platform = item.get("pltfrm", "unknown")
+                description = item.get("summary", "")
+
+                key = name.lower()
+                if key not in existing_info:
+                    info_obj = GamesInfo(name, cover, description)
+                    info_to_add.append(info_obj)
+                    existing_info[key] = info_obj
+                elif existing_info[key].cover is None:
+                    existing_info[key].cover = cover
+                    existing_info[key].description = description
+
+                games_to_add.append(
+                    Game(
+                        name=name,
+                        cover=cover,
+                        size=size,
+                        magnet=magnet,
+                        platform=platform,
+                        description=description
+                    )
+                )
+
+            if info_to_add:
+                session.add_all(info_to_add)
+            if games_to_add:
+                session.add_all(games_to_add)
+            
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
     def add_game(self, name, cover, size, magnet, platform, description):
-        
-        # check if game already exists in GamesInfo table
-        if self._get_game_info(name) is None:
-            self._add_game_info(name, cover, description)
-        
-        # if exists but cover is None, update cover and description
-        elif self._get_game_info(name).cover is None:
-            self._update_game_info(name, cover, description)
-    
-        self.session.add(Game(name, cover, size, magnet, platform, description))
-        self.session.commit()
+        self.add_games_batch([{
+            "name": name,
+            "cover": cover,
+            "size": size,
+            "magnet": magnet,
+            "pltfrm": platform,
+            "summary": description
+        }])
         
     def get_games(self):
         return self.session.query(Game).all()
     
     def get_game(self, name):
-        # search by matching incomplete name
         return self.session.query(Game).filter(Game.name.ilike(f'%{name}%')).all()
     
     def get_library_game(self, name):
@@ -92,45 +147,43 @@ class Database:
     def get_specific_game(self, name):
         return self.session.query(Game).filter(Game.name == name).first()
     
-    # get n random games from the database
     def get_randn_games(self, n):
-        # if n is greater than the number of games in the database, return all games
         if n > self.count_games():
             return self.get_games()
         return self.session.query(Game).order_by(func.random()).limit(n).all()
     
-    # get a page of games, ordered by id, for paginated views
     def get_games_page(self, offset, limit):
         return self.session.query(Game).order_by(Game.id).offset(offset).limit(limit).all()
     
-    # get a page of games matching a search term
     def get_game_page(self, name, offset, limit):
         return self.session.query(Game).filter(Game.name.ilike(f'%{name}%')).order_by(Game.id).offset(offset).limit(limit).all()
     
-    # count games matching a search term, used to compute total pages
     def count_game_search(self, name):
         return self.session.query(Game).filter(Game.name.ilike(f'%{name}%')).count()
     
     def delete_game(self, name):
         game = self.get_game(name)
-        self.session.delete(game)
-        self.session.commit()
+        if game:
+            for g in game:
+                self.session.delete(g)
+            self.session.commit()
         
     def update_game(self, name, cover, size, magnet, platform, description):
-        game = self.get_game(name)
-        game.cover = cover
-        game.size = size
-        game.magnet = magnet
-        game.platform = platform
-        game.description = description
-        self.session.commit()
+        game = self.session.query(Game).filter(Game.name == name).first()
+        if game:
+            game.cover = cover
+            game.size = size
+            game.magnet = magnet
+            game.platform = platform
+            game.description = description
+            self.session.commit()
         
     def count_games(self):
         return self.session.query(Game).count()
     
     def _add_game_info(self, name, cover, description):
-        cover = GamesInfo(name, cover, description)
-        self.session.add(cover)
+        cover_obj = GamesInfo(name, cover, description)
+        self.session.add(cover_obj)
         self.session.commit()
         
     def _get_game_info(self, name):
@@ -138,9 +191,10 @@ class Database:
     
     def _update_game_info(self, name, cover, description):
         game_info = self._get_game_info(name)
-        game_info.cover = cover
-        game_info.description = description
-        self.session.commit()
+        if game_info:
+            game_info.cover = cover
+            game_info.description = description
+            self.session.commit()
         
     def close(self):
         self.session.close()

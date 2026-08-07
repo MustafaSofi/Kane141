@@ -1,167 +1,68 @@
-import requests
+import concurrent.futures
 import json
-from .thread_with_return import ThreadWithReturnValue
-from .steam_metadata import get_cover_and_summary as steam_get_cover_and_summary, NO_COVER
-import os
-import numpy as np
-import time
+import logging
+import requests
 import unidecode
+from utils.steam_metadata import get_cover_and_summary as steam_get_cover_and_summary, _SHARED_SESSION
+
+logger = logging.getLogger("ReleasesFeed")
 
 class ReleasesFeed:
     def __init__(self, db_object):
-        
         self.db = db_object
-        
         self.feed_json_url = "https://github.com/jc141x/releases-feed/releases/latest/download/releases.json"
-        
-    
+
     def pipeline(self):
-        
         feed = self.get_latest_feed()
-        feed = self.format_feed(feed)
-        
-        feed = self.parallelize_update_game_records(feed)
-        
-        self.update_database(feed)
-    
-    
+        formatted_feed = self.format_feed(feed)
+        enriched_feed = self.parallelize_update_game_records(formatted_feed)
+        self.update_database(enriched_feed)
+
     def get_latest_feed(self):
-        r = requests.get(self.feed_json_url)
+        r = _SHARED_SESSION.get(self.feed_json_url, timeout=15)
         if r.status_code != 200:
-            raise RuntimeError(
-                f"Could not fetch the releases feed (HTTP {r.status_code}). "
-                f"jc141x's releases-feed may be temporarily down -- try again later."
-            )
+            raise RuntimeError(f"Could not fetch releases feed (HTTP {r.status_code}).")
         try:
             return r.json()
         except json.JSONDecodeError:
-            raise RuntimeError(
-                "The releases feed did not return valid data. "
-                "jc141x's releases-feed may be temporarily down -- try again later."
-            )
-    
+            raise RuntimeError("Releases feed returned invalid JSON.")
+
     def format_feed(self, feed):
-        
-        formated_feed = []
-        
-        schema = {
-            "name": "",
-            "size": "",
-            "magnet": "",
-            "pltfrm": "",
-            "cover": "",
-            "summary": "",
-        }
-        
+        formatted = []
         for record in feed:
-            formated_feed.append(schema.copy())
-            formated_feed[-1]["name"] = record["name"]
-            formated_feed[-1]["size"] = record["total_size"]
-            formated_feed[-1]["magnet"] = record["magnet_link"]    
-            
-        return formated_feed
-    
-    def get_cover_and_summary(self, game):
-        
-        game_info = self.db._get_game_info(game)
-        
-        if (game_info is not None):
-            if game_info.cover is not None:
-                return game_info.cover, game_info.description
-        
-        time.sleep(0.5)
+            formatted.append({
+                "name": record.get("name", ""),
+                "size": record.get("total_size", ""),
+                "magnet": record.get("magnet_link", ""),
+                "pltfrm": "wine" if "Wine" in record.get("magnet_link", "") else ("native" if "Native" in record.get("magnet_link", "") else "unknown"),
+                "cover": "",
+                "summary": ""
+            })
+        return formatted
 
-        return steam_get_cover_and_summary(unidecode.unidecode(game))
+    def _process_item(self, item):
+        name = item["name"]
+        clean_name = name.split("-", 1)[0] if "-" in name else name.split("[", 1)[0]
+        clean_name = clean_name.replace("–", "-").replace("’", "'").strip()
+        item["name"] = clean_name
 
-    def update_game_records(self, json_array):
-                
-        num = len(json_array)
-        
-        # udate platform info
-        for i in range(num):
-            try:
-                if "Wine" in json_array[i]["magnet"]:
-                    json_array[i]["pltfrm"] = "wine"
-                elif "Native" in json_array[i]["magnet"]:
-                    json_array[i]["pltfrm"] = "native"
-            except KeyError:
-                continue
+        # Check existing database info cache first
+        info = self.db._get_game_info(clean_name)
+        if info and info.cover:
+            item["cover"] = info.cover
+            item["summary"] = info.description
+        else:
+            item["cover"], item["summary"] = steam_get_cover_and_summary(unidecode.unidecode(clean_name))
+        return item
 
-        # normalize game names and get cover art
-        for i in range(num):
-            try:
-                if "-" in json_array[i]["name"]:
-                    json_array[i]["name"] = json_array[i]["name"].split("-", 1)[0]
-                else:
-                    json_array[i]["name"] = json_array[i]["name"].split("[", 1)[0]
-
-                
-                if '\"' in json_array[i]["name"]:
-                    continue
-                
-                #print(json_array[i]["no"])
-
-                json_array[i]["cover"], json_array[i]["summary"] = self.get_cover_and_summary(
-                    json_array[i]["name"].replace("–", "-").replace("’", "'")
-                )
-                time.sleep(1) 
-            except KeyError:
-                continue
-        
-        return json_array
-    
     def parallelize_update_game_records(self, json_array):
-        
-        num = 10
-        
-        # split json array into 10 chunks
-        chunks = np.array_split(json_array, num)
-        
-        # convert chunks to list
-        chunks = [list(i) for i in chunks]
-        
-        results = [None] * num
-        
-        start = time.time()
-        
-        threads = []
-        for i in range(num):
-            threads.append(ThreadWithReturnValue(target=self.update_game_records, args=(chunks[i],)))
-            threads[i].start()
-            time.sleep(1)
-            
-        
-        # join threads
-        for i in range(num):
-            results[i] = threads[i].join()
-            
-        end = time.time()
-        print(f"parallelize_update_game_records took {end - start} seconds")
-        # merge results
-        json_array = []
-        for i in range(num):
-            if results[i] is not None:
-                json_array.extend(results[i])
-        
-        return json_array
+        # Bounded thread pool for concurrent metadata enrichment
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            results = list(executor.map(self._process_item, json_array))
+        return results
 
     def update_database(self, json_array):
-        
         self.db.delete_all()
-        
-        num = len(json_array)
-        
-        for i in range(num):
-            try:
-                if json_array[i]["pltfrm"] == "wine" or json_array[i]["pltfrm"] == "native":
-                    self.db.add_game(
-                        json_array[i]["name"],
-                        json_array[i]["cover"],
-                        json_array[i]["size"],
-                        json_array[i]["magnet"],
-                        json_array[i]["pltfrm"],
-                        json_array[i]["summary"],
-                    )
-            except KeyError:
-                continue
-        print("updating db done")
+        filtered = [x for x in json_array if x.get("pltfrm") in ("wine", "native", "unknown")]
+        self.db.add_games_batch(filtered)
+        logger.info("Feed database update completed successfully.")
