@@ -37,7 +37,7 @@ class Settings(Plugin):
         # that aren't already in the local database. Safe to click
         # regularly to pick up newly-added releases from jc141x's feed.
         self.update_db_label = MDLabel(
-            text="Check jc141x's feed for new repacks (fast, adds only what's new):",
+            text="Check 1337x for new repacks since your last update (fast -- stops as soon as it catches up):",
             halign="left",
             theme_text_color="Secondary",
             size_hint=(1, 0.00001),
@@ -90,13 +90,20 @@ class Settings(Plugin):
         t.start()
         
     def update_db_helper(self, instance):
-        from utils import ReleasesFeed
+        import tempfile
+        import os
+        from utils import JohnCena141Scraper
         
         self._set_text(instance, "Checking for new repacks, please DO NOT close the application.")
 
+        csv_path = os.path.join(tempfile.gettempdir(), "kane141_incremental_scan")
+
         try:
-            updater = ReleasesFeed(db_object=db)
-            new_count = updater.pipeline()
+            scraper = JohnCena141Scraper(
+                csv_name=csv_path,
+                db_object=db,
+            )
+            new_count = scraper.run_incremental()
             if new_count:
                 self._set_text(instance, f"Added {new_count} new repack(s)")
             else:

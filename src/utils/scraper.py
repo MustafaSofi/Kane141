@@ -172,6 +172,7 @@ class JohnCena141Scraper:
 
             return {
                 "name": filename,
+                "url": url,
                 "seeders": seeders,
                 "leechers": leechers,
                 "size": size,
@@ -244,7 +245,91 @@ class JohnCena141Scraper:
         if os.path.exists(CHECKPOINT_FILE):
             os.remove(CHECKPOINT_FILE)
 
-    def enrich_and_push(self, records):
+    def run_incremental(self):
+        """
+        Fast "check for new repacks" mode: walks 1337x pages from page 1
+        (newest uploads first) the same way run() does, but compares each
+        page's torrent listing links against what's already in the local
+        DB *before* visiting any detail pages. As soon as a page turns up
+        zero unknown links, we've caught up to already-scraped content --
+        stop there instead of walking the entire archive. Only the
+        genuinely new torrents get their detail pages fetched and Steam
+        metadata looked up. Never wipes the existing database.
+        """
+        logger.info("Checking for new repacks...")
+        known_urls = self.db.get_known_torrent_urls()
+        page_num = 1
+        new_records = []
+        consecutive_empty_pages = 0
+
+        while True:
+            page_url = f"{self.mirror_base}/user/johncena141/{page_num}/"
+            page_resp = None
+
+            for attempt in range(1, MAX_RETRIES_PER_PAGE + 1):
+                try:
+                    resp = self.session.get(page_url, timeout=15)
+                    if resp.status_code == 200:
+                        page_resp = resp
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.5 * attempt)
+
+            if not page_resp:
+                consecutive_empty_pages += 1
+                if consecutive_empty_pages >= CONSECUTIVE_EMPTY_PAGES_TO_STOP:
+                    logger.info(f"Stopping: {consecutive_empty_pages} consecutive failed pages")
+                    break
+                page_num += 1
+                continue
+
+            soup = BeautifulSoup(page_resp.content, "lxml")
+            torrent_urls = self._extract_torrent_links(soup, self.mirror_base)
+
+            if not torrent_urls:
+                consecutive_empty_pages += 1
+                if consecutive_empty_pages >= CONSECUTIVE_EMPTY_PAGES_TO_STOP:
+                    logger.info(f"Stopping: {consecutive_empty_pages} consecutive empty pages")
+                    break
+                page_num += 1
+                continue
+
+            consecutive_empty_pages = 0
+            new_urls = [u for u in torrent_urls if u not in known_urls]
+
+            if not new_urls:
+                # every torrent on this page is already in the DB -- since
+                # uploads are listed newest-first, everything past this
+                # point is already known too. No need to go any further.
+                logger.info(f"Caught up to known repacks at page {page_num} -- stopping.")
+                break
+
+            logger.info(f"page {page_num}: {len(new_urls)} new repack(s)")
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                results = list(executor.map(self._scrape_single_torrent, new_urls))
+
+            valid_results = [r for r in results if r and r["name"]]
+            new_records.extend(valid_results)
+
+            # a page with SOME known links mixed in among new ones means
+            # we've reached the boundary -- next page will be all-known,
+            # so this is as far as we need to go
+            if len(new_urls) < len(torrent_urls):
+                logger.info(f"Reached boundary of new content at page {page_num} -- stopping.")
+                break
+
+            page_num += 1
+
+        if not new_records:
+            logger.info("No new repacks found -- database is already up to date.")
+            return 0
+
+        self.enrich_and_push(new_records, wipe=False)
+        return len(new_records)
+
+    def enrich_and_push(self, records, wipe=True):
         logger.info("Enriching records with Steam metadata...")
         
         records_to_fetch = []
@@ -305,6 +390,7 @@ class JohnCena141Scraper:
                 fetched_records = list(executor.map(fetch_steam, records_to_fetch))
             enriched.extend(fetched_records)
 
-        self.db.delete_all()
+        if wipe:
+            self.db.delete_all()
         self.db.add_games_batch(enriched)
         logger.info("Database updated successfully.")

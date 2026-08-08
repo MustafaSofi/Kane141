@@ -20,8 +20,9 @@ class Game(Base):
     platform = Column(String)
     description = Column(String)
     steam_appid = Column(String)
+    torrent_url = Column(String)
     
-    def __init__(self, name, cover, size, magnet, platform, description, steam_appid=None):
+    def __init__(self, name, cover, size, magnet, platform, description, steam_appid=None, torrent_url=None):
         self.name = name
         self.cover = cover
         self.size = size
@@ -29,6 +30,7 @@ class Game(Base):
         self.platform = platform
         self.description = description
         self.steam_appid = steam_appid
+        self.torrent_url = torrent_url
 
     def __repr__(self):
         return f"<Game(name={self.name}, cover={self.cover}, size={self.size}, platform={self.platform})>"
@@ -81,6 +83,9 @@ class Database:
             if "steam_appid" not in existing_cols:
                 conn.execute(text("ALTER TABLE games ADD COLUMN steam_appid TEXT"))
                 conn.commit()
+            if "torrent_url" not in existing_cols:
+                conn.execute(text("ALTER TABLE games ADD COLUMN torrent_url TEXT"))
+                conn.commit()
         
     def add_games_batch(self, game_dicts):
         """Batch insert or update games and metadata in a single transaction."""
@@ -103,6 +108,7 @@ class Database:
                 platform = item.get("pltfrm", "unknown")
                 description = item.get("summary", "")
                 steam_appid = item.get("appid")
+                torrent_url = item.get("url")
 
                 key = name.lower()
                 if key not in existing_info:
@@ -121,7 +127,8 @@ class Database:
                         magnet=magnet,
                         platform=platform,
                         description=description,
-                        steam_appid=steam_appid
+                        steam_appid=steam_appid,
+                        torrent_url=torrent_url
                     )
                 )
 
@@ -150,6 +157,13 @@ class Database:
         
     def get_games(self):
         return self.session.query(Game).all()
+
+    def get_known_torrent_urls(self):
+        """Cheap set of every torrent_url already in the DB, for comparing
+        against a fresh 1337x listing page without needing to visit each
+        torrent's detail page first."""
+        rows = self.session.query(Game.torrent_url).filter(Game.torrent_url.isnot(None)).all()
+        return {r[0] for r in rows}
     
     def get_game(self, name):
         return self.session.query(Game).filter(Game.name.ilike(f'%{name}%')).all()
