@@ -19,14 +19,16 @@ class Game(Base):
     magnet = Column(String)
     platform = Column(String)
     description = Column(String)
+    steam_appid = Column(String)
     
-    def __init__(self, name, cover, size, magnet, platform, description):
+    def __init__(self, name, cover, size, magnet, platform, description, steam_appid=None):
         self.name = name
         self.cover = cover
         self.size = size
         self.magnet = magnet
         self.platform = platform
         self.description = description
+        self.steam_appid = steam_appid
 
     def __repr__(self):
         return f"<Game(name={self.name}, cover={self.cover}, size={self.size}, platform={self.platform})>"
@@ -68,6 +70,17 @@ class Database:
         self.Session = sessionmaker(bind=self.engine)
         self.session = self.Session()
         Base.metadata.create_all(self.engine)
+        self._migrate_schema()
+
+    def _migrate_schema(self):
+        """Add columns to existing databases that predate them (create_all
+        only creates brand-new tables, it won't alter existing ones)."""
+        from sqlalchemy import text
+        with self.engine.connect() as conn:
+            existing_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(games)"))}
+            if "steam_appid" not in existing_cols:
+                conn.execute(text("ALTER TABLE games ADD COLUMN steam_appid TEXT"))
+                conn.commit()
         
     def add_games_batch(self, game_dicts):
         """Batch insert or update games and metadata in a single transaction."""
@@ -89,6 +102,7 @@ class Database:
                 magnet = item.get("magnet", "")
                 platform = item.get("pltfrm", "unknown")
                 description = item.get("summary", "")
+                steam_appid = item.get("appid")
 
                 key = name.lower()
                 if key not in existing_info:
@@ -106,7 +120,8 @@ class Database:
                         size=size,
                         magnet=magnet,
                         platform=platform,
-                        description=description
+                        description=description,
+                        steam_appid=steam_appid
                     )
                 )
 
@@ -122,14 +137,15 @@ class Database:
         finally:
             session.close()
 
-    def add_game(self, name, cover, size, magnet, platform, description):
+    def add_game(self, name, cover, size, magnet, platform, description, steam_appid=None):
         self.add_games_batch([{
             "name": name,
             "cover": cover,
             "size": size,
             "magnet": magnet,
             "pltfrm": platform,
-            "summary": description
+            "summary": description,
+            "appid": steam_appid
         }])
         
     def get_games(self):

@@ -101,7 +101,8 @@ class GameCard(MDCard, BorderBehavior):
         toast(f"Copied magnet link for {self.game_obj.name}", duration=3.0)
 
     def fetch_requirements(self):
-        reqs = get_system_requirements(self.game_obj.name)
+        appid = getattr(self.game_obj, "steam_appid", None)
+        reqs = get_system_requirements(self.game_obj.name, appid=appid)
         # UI updates must happen on the main thread
         Clock.schedule_once(lambda dt: self.update_requirements(reqs))
 

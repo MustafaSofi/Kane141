@@ -33,17 +33,27 @@ class Settings(Plugin):
         self.save_btn = MDRaisedButton(text="Save",on_press=self.save_settings, pos_hint={"center_x": 0.5, "center_y": 0.5}, size_hint=(0.8, 0.00001))
         self.layout.add_widget(self.save_btn)
         
-        # update database button, color red, text color black
-        self.update_db_btn = MDRaisedButton(text="Update database",pos_hint={"center_x": 0.5, "center_y": 0.5}, md_bg_color="#ff0000", size_hint=(0.8, 0.00001), text_color=(0, 0, 0, 1))
+        # update database button -- fast, incremental: only adds repacks
+        # that aren't already in the local database. Safe to click
+        # regularly to pick up newly-added releases from jc141x's feed.
+        self.update_db_label = MDLabel(
+            text="Check jc141x's feed for new repacks (fast, adds only what's new):",
+            halign="left",
+            theme_text_color="Secondary",
+            size_hint=(1, 0.00001),
+        )
+        self.layout.add_widget(self.update_db_label)
+
+        self.update_db_btn = MDRaisedButton(text="Check for New Repacks",pos_hint={"center_x": 0.5, "center_y": 0.5}, md_bg_color="#ff0000", size_hint=(0.8, 0.00001), text_color=(0, 0, 0, 1))
         self.update_db_btn.bind(on_press=self.update_db)
         self.layout.add_widget(self.update_db_btn)
 
         # full rescan button -- scrapes johncena141's entire 1337x upload
-        # history directly, rather than the capped/latest-2000 releases feed.
-        # much slower (can take hours), used as a fallback.
+        # history directly, WIPES the database and rebuilds it from
+        # scratch. Much slower (can take a while), used for a complete
+        # historical rebuild or if the fast feed above is capped/down.
         self.full_scan_label = MDLabel(
-            text="If 'Update database' is capped or the releases feed is down, "
-                 "you can do a full (slow) scrape of every upload instead:",
+            text="Full rebuild from 1337x directly (slow, wipes and replaces everything):",
             halign="left",
             theme_text_color="Secondary",
             size_hint=(1, 0.00001),
@@ -82,12 +92,15 @@ class Settings(Plugin):
     def update_db_helper(self, instance):
         from utils import ReleasesFeed
         
-        self._set_text(instance, "Database is being updated, please DO NOT close the application.")
+        self._set_text(instance, "Checking for new repacks, please DO NOT close the application.")
 
         try:
             updater = ReleasesFeed(db_object=db)
-            updater.pipeline()
-            self._set_text(instance, "Database update done")
+            new_count = updater.pipeline()
+            if new_count:
+                self._set_text(instance, f"Added {new_count} new repack(s)")
+            else:
+                self._set_text(instance, "No new repacks found -- already up to date")
         except Exception as e:
             print(f"Database update failed: {e}")
             self._set_text(instance, f"Update failed: {e}")

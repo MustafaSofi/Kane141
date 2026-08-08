@@ -253,16 +253,36 @@ class JohnCena141Scraper:
         # Pass 1: Local DB Check (Safe on Main Thread)
         for rec in records:
             name = rec["name"]
-            if "gnu/ wine" in name.lower() or "gnu/wine" in name.lower():
+            name_lower = name.lower()
+            has_wine = "wine" in name_lower
+            has_native = "native" in name_lower
+            if has_wine and not has_native:
                 rec["pltfrm"] = "wine"
-            elif "gnu/ native" in name.lower() or "gnu/native" in name.lower():
+            elif has_native and not has_wine:
                 rec["pltfrm"] = "native"
             else:
                 rec["pltfrm"] = "unknown"
 
-            clean_name = name.split("-", 1)[0] if "-" in name else name.split("[", 1)[0]
+            # every jc141 repack title embeds the real Steam AppID, e.g.
+            # "(Appid=1030300)" -- extract it from the RAW title (before
+            # any cleaning) and use it for a direct, reliable Steam lookup
+            # instead of guessing from a name string
+            appid_match = re.search(r"(?i)appid\s*=\s*(\d+)", name)
+            rec["appid"] = appid_match.group(1) if appid_match else None
+
+            # split on " - " (with surrounding spaces) rather than any
+            # bare "-", so titles that themselves contain a hyphen
+            # ("SJ-19 Learns To Love!", "Zero-Sum Heart", "Yooka-Replaylee")
+            # don't get mangled down to a single fragment word
+            if " - " in name:
+                clean_name = name.split(" - ", 1)[0]
+            elif "-" in name:
+                clean_name = name.split("-", 1)[0]
+            else:
+                clean_name = name.split("[", 1)[0]
             clean_name = clean_name.replace("–", "-").replace("’", "'").strip()
             rec["clean_name"] = clean_name
+            rec["name"] = clean_name
 
             info = self.db._get_game_info(clean_name)
             if info and info.cover:
@@ -274,7 +294,9 @@ class JohnCena141Scraper:
 
         # Pass 2: Steam API Fetch (Threaded for Speed)
         def fetch_steam(rec):
-            rec["cover"], rec["summary"] = steam_get_cover_and_summary(rec["clean_name"], session=self.session)
+            rec["cover"], rec["summary"] = steam_get_cover_and_summary(
+                rec["clean_name"], appid=rec.get("appid"), session=self.session
+            )
             return rec
 
         if records_to_fetch:
