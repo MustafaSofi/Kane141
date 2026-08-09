@@ -367,6 +367,11 @@ class JohnCena141Scraper:
                 clean_name = name.split("[", 1)[0]
             clean_name = clean_name.replace("–", "-").replace("’", "'").strip()
             rec["clean_name"] = clean_name
+            rec["release_name"] = name  # keep the original raw title -- this
+            # is what actually distinguishes two same-named entries (e.g.
+            # two "Cuphead" results with different sizes are usually
+            # different versions/updates/DLC bundles; the cleaned display
+            # name alone can't show that, the raw title usually can)
             rec["name"] = clean_name
 
             info = self.db._get_game_info(clean_name)

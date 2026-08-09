@@ -21,8 +21,10 @@ class Game(Base):
     description = Column(String)
     steam_appid = Column(String)
     torrent_url = Column(String)
+    release_name = Column(String)
+    date_uploaded = Column(String)
     
-    def __init__(self, name, cover, size, magnet, platform, description, steam_appid=None, torrent_url=None):
+    def __init__(self, name, cover, size, magnet, platform, description, steam_appid=None, torrent_url=None, release_name=None, date_uploaded=None):
         self.name = name
         self.cover = cover
         self.size = size
@@ -31,6 +33,8 @@ class Game(Base):
         self.description = description
         self.steam_appid = steam_appid
         self.torrent_url = torrent_url
+        self.release_name = release_name
+        self.date_uploaded = date_uploaded
 
     def __repr__(self):
         return f"<Game(name={self.name}, cover={self.cover}, size={self.size}, platform={self.platform})>"
@@ -86,6 +90,32 @@ class Database:
             if "torrent_url" not in existing_cols:
                 conn.execute(text("ALTER TABLE games ADD COLUMN torrent_url TEXT"))
                 conn.commit()
+            if "release_name" not in existing_cols:
+                conn.execute(text("ALTER TABLE games ADD COLUMN release_name TEXT"))
+                conn.commit()
+            if "date_uploaded" not in existing_cols:
+                conn.execute(text("ALTER TABLE games ADD COLUMN date_uploaded TEXT"))
+                conn.commit()
+
+            # de-dupe any existing duplicate rows before adding the unique
+            # index below, or the index creation itself would fail
+            conn.execute(text("""
+                DELETE FROM games WHERE torrent_url IS NOT NULL AND id NOT IN (
+                    SELECT MIN(id) FROM games
+                    WHERE torrent_url IS NOT NULL
+                    GROUP BY torrent_url
+                )
+            """))
+            conn.commit()
+
+            # partial unique index: allows any number of NULLs (older rows
+            # scraped before torrent_url existed) but makes it impossible
+            # for the same torrent to be inserted twice going forward
+            conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_games_torrent_url "
+                "ON games(torrent_url) WHERE torrent_url IS NOT NULL"
+            ))
+            conn.commit()
         
     def add_games_batch(self, game_dicts):
         """Batch insert or update games and metadata in a single transaction."""
@@ -96,9 +126,18 @@ class Database:
         try:
             # Load existing GamesInfo records into memory for fast lookup
             existing_info = {gi.name.lower(): gi for gi in session.query(GamesInfo).all()}
+
+            # skip anything whose torrent_url is already in the DB -- the
+            # partial unique index below is the hard guarantee, but
+            # filtering here avoids a batch-killing IntegrityError and
+            # keeps the "how many new repacks" count accurate
+            existing_urls = {
+                r[0] for r in session.query(Game.torrent_url).filter(Game.torrent_url.isnot(None)).all()
+            }
             
             games_to_add = []
             info_to_add = []
+            seen_urls_this_batch = set()
 
             for item in game_dicts:
                 name = item.get("name", "")
@@ -109,6 +148,13 @@ class Database:
                 description = item.get("summary", "")
                 steam_appid = item.get("appid")
                 torrent_url = item.get("url")
+                release_name = item.get("release_name")
+                date_uploaded = item.get("date")
+
+                if torrent_url and (torrent_url in existing_urls or torrent_url in seen_urls_this_batch):
+                    continue
+                if torrent_url:
+                    seen_urls_this_batch.add(torrent_url)
 
                 key = name.lower()
                 if key not in existing_info:
@@ -128,7 +174,9 @@ class Database:
                         platform=platform,
                         description=description,
                         steam_appid=steam_appid,
-                        torrent_url=torrent_url
+                        torrent_url=torrent_url,
+                        release_name=release_name,
+                        date_uploaded=date_uploaded
                     )
                 )
 

@@ -58,9 +58,7 @@ class GameCard(MDCard, BorderBehavior):
                 
     def on_press(self):
 
-        header = f"Description: \n{self.game_obj.description}\n\n" \
-                f"Size: {self.game_obj.size}\n\n" \
-                f"Platform: {self.game_obj.platform.title()}\n\n"
+        header = self._build_header()
 
         # persistent label whose text we update in place -- the dialog frame
         # and its buttons are never rebuilt, so the button stays clickable
@@ -94,7 +92,26 @@ class GameCard(MDCard, BorderBehavior):
 
         # fetch requirements in the background so the UI doesn't freeze
         threading.Thread(target=self.fetch_requirements, daemon=True).start()
-        
+
+    def _build_header(self):
+        parts = [f"Description: \n{self.game_obj.description}\n"]
+
+        release_name = getattr(self.game_obj, "release_name", None)
+        if release_name:
+            # this is what actually distinguishes two entries with the
+            # same display name -- e.g. two "Cuphead" results at
+            # different sizes are usually different versions/updates/DLC
+            # bundles, which only shows up in the original release title
+            parts.append(f"Release: {release_name}\n")
+
+        date_uploaded = getattr(self.game_obj, "date_uploaded", None)
+        if date_uploaded:
+            parts.append(f"Uploaded: {date_uploaded}\n")
+
+        parts.append(f"Size: {self.game_obj.size}\n")
+        parts.append(f"Platform: {self.game_obj.platform.title()}\n")
+
+        return "\n".join(parts) + "\n"
         
     def copy_magnet(self, instance):
         Clipboard.copy(self.magnet)
@@ -111,9 +128,7 @@ class GameCard(MDCard, BorderBehavior):
         if not hasattr(self, "info_label"):
             return
 
-        header = f"Description: \n{self.game_obj.description}\n\n" \
-                f"Size: {self.game_obj.size}\n\n" \
-                f"Platform: {self.game_obj.platform.title()}\n\n"
+        header = self._build_header()
 
         if reqs:
             self.info_label.text = f"{header}Minimum Requirements:\n{reqs}"
