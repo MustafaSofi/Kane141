@@ -23,8 +23,9 @@ class Game(Base):
     torrent_url = Column(String)
     release_name = Column(String)
     date_uploaded = Column(String)
+    upload_date_sort = Column(String)
     
-    def __init__(self, name, cover, size, magnet, platform, description, steam_appid=None, torrent_url=None, release_name=None, date_uploaded=None):
+    def __init__(self, name, cover, size, magnet, platform, description, steam_appid=None, torrent_url=None, release_name=None, date_uploaded=None, upload_date_sort=None):
         self.name = name
         self.cover = cover
         self.size = size
@@ -35,6 +36,7 @@ class Game(Base):
         self.torrent_url = torrent_url
         self.release_name = release_name
         self.date_uploaded = date_uploaded
+        self.upload_date_sort = upload_date_sort
 
     def __repr__(self):
         return f"<Game(name={self.name}, cover={self.cover}, size={self.size}, platform={self.platform})>"
@@ -96,6 +98,9 @@ class Database:
             if "date_uploaded" not in existing_cols:
                 conn.execute(text("ALTER TABLE games ADD COLUMN date_uploaded TEXT"))
                 conn.commit()
+            if "upload_date_sort" not in existing_cols:
+                conn.execute(text("ALTER TABLE games ADD COLUMN upload_date_sort TEXT"))
+                conn.commit()
 
             # de-dupe any existing duplicate rows before adding the unique
             # index below, or the index creation itself would fail
@@ -150,6 +155,7 @@ class Database:
                 torrent_url = item.get("url")
                 release_name = item.get("release_name")
                 date_uploaded = item.get("date")
+                upload_date_sort = item.get("date_sort")
 
                 if torrent_url and (torrent_url in existing_urls or torrent_url in seen_urls_this_batch):
                     continue
@@ -176,7 +182,8 @@ class Database:
                         steam_appid=steam_appid,
                         torrent_url=torrent_url,
                         release_name=release_name,
-                        date_uploaded=date_uploaded
+                        date_uploaded=date_uploaded,
+                        upload_date_sort=upload_date_sort
                     )
                 )
 
@@ -231,10 +238,10 @@ class Database:
         return self.session.query(Game).order_by(func.random()).limit(n).all()
     
     def get_games_page(self, offset, limit):
-        return self.session.query(Game).order_by(Game.id).offset(offset).limit(limit).all()
+        return self.session.query(Game).order_by(Game.upload_date_sort.desc(), Game.id.desc()).offset(offset).limit(limit).all()
     
     def get_game_page(self, name, offset, limit):
-        return self.session.query(Game).filter(Game.name.ilike(f'%{name}%')).order_by(Game.id).offset(offset).limit(limit).all()
+        return self.session.query(Game).filter(Game.name.ilike(f'%{name}%')).order_by(Game.upload_date_sort.desc(), Game.id.desc()).offset(offset).limit(limit).all()
     
     def count_game_search(self, name):
         return self.session.query(Game).filter(Game.name.ilike(f'%{name}%')).count()

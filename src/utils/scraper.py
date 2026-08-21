@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import time
+from datetime import datetime, timedelta
 from urllib.parse import urlparse, urljoin
 from bs4 import BeautifulSoup
 import requests
@@ -23,6 +24,54 @@ logger = logging.getLogger("Scraper")
 
 CONSECUTIVE_EMPTY_PAGES_TO_STOP = 3
 MAX_RETRIES_PER_PAGE = 3
+
+
+def parse_upload_date(raw):
+    """
+    1337x's "Date uploaded" field is inconsistent: relative for recent
+    uploads ("5 hours ago", "Yesterday", "3 days ago") and absolute for
+    older ones ("Aug. 5th '25", "Jan. 1st 2024"). Returns an ISO
+    "YYYY-MM-DD" string for sorting, or None if it can't be parsed --
+    unparseable dates sort last (oldest) in SQLite's DESC ordering
+    rather than corrupting the sort.
+    """
+    if not raw:
+        return None
+    raw = raw.strip()
+    lower = raw.lower()
+    now = datetime.now()
+
+    try:
+        if "just now" in lower or "min" in lower or "hour" in lower:
+            return now.strftime("%Y-%m-%d")
+        if lower == "yesterday":
+            return (now - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        m = re.match(r"(\d+)\s*day", lower)
+        if m:
+            return (now - timedelta(days=int(m.group(1)))).strftime("%Y-%m-%d")
+
+        m = re.match(r"(\d+)\s*week", lower)
+        if m:
+            return (now - timedelta(weeks=int(m.group(1)))).strftime("%Y-%m-%d")
+
+        m = re.match(r"(\d+)\s*month", lower)
+        if m:
+            return (now - timedelta(days=int(m.group(1)) * 30)).strftime("%Y-%m-%d")
+
+        # absolute dates like "Aug. 5th '25" or "Jan. 1st 2024"
+        cleaned = raw.replace("st", "").replace("nd", "").replace("rd", "").replace("th", "")
+        cleaned = cleaned.replace(".", "").replace("'", " ").strip()
+        cleaned = " ".join(cleaned.split())
+
+        for fmt in ("%b %d %y", "%b %d %Y", "%B %d %Y", "%B %d %y"):
+            try:
+                return datetime.strptime(cleaned, fmt).strftime("%Y-%m-%d")
+            except ValueError:
+                continue
+    except Exception:
+        pass
+    return None
 
 HEADERS = {
     "User-Agent": (
@@ -177,6 +226,7 @@ class JohnCena141Scraper:
                 "leechers": leechers,
                 "size": size,
                 "date": date,
+                "date_sort": parse_upload_date(date),
                 "magnet": magnet
             }
         except Exception as e:
