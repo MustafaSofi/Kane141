@@ -91,6 +91,16 @@ MIRRORS = [
     "https://1337x.so",
 ]
 
+# tried in order per mirror. /johncena141-torrents/ is 1337x's original
+# vanity URL for this uploader's page and tends to update fastest on the
+# canonical site; /user/johncena141/ is the generic profile URL that
+# reliably works even where the vanity URL doesn't (some mirrors only
+# support one or the other).
+URL_PATTERNS = [
+    "/johncena141-torrents/{page}/",
+    "/user/johncena141/{page}/",
+]
+
 CHECKPOINT_FILE = os.path.expanduser("~/.config/kane141/scraper_checkpoint.json")
 
 class JohnCena141Scraper:
@@ -162,24 +172,27 @@ class JohnCena141Scraper:
 
     def _find_working_mirror(self):
         for mirror in MIRRORS:
-            try:
-                resp = self.session.get(f"{mirror}/user/johncena141/1/", timeout=10)
-                if resp.status_code != 200:
-                    continue
-                
-                parsed_url = urlparse(resp.url)
-                actual_base = f"{parsed_url.scheme}://{parsed_url.netloc}"
-                soup = BeautifulSoup(resp.content, "lxml")
-                
-                if self._extract_torrent_links(soup, actual_base):
-                    logger.info(f"Using 1337x mirror: {actual_base}")
-                    return actual_base
-            except Exception as e:
-                logger.debug(f"Mirror {mirror} failed: {e}")
+            for pattern in URL_PATTERNS:
+                try:
+                    url = f"{mirror}{pattern.format(page=1)}"
+                    resp = self.session.get(url, timeout=10)
+                    if resp.status_code != 200:
+                        continue
+
+                    parsed_url = urlparse(resp.url)
+                    actual_base = f"{parsed_url.scheme}://{parsed_url.netloc}"
+                    soup = BeautifulSoup(resp.content, "lxml")
+
+                    if self._extract_torrent_links(soup, actual_base):
+                        logger.info(f"Using 1337x mirror: {actual_base} (pattern: {pattern})")
+                        self.url_pattern = pattern
+                        return actual_base
+                except Exception as e:
+                    logger.debug(f"Mirror {mirror}{pattern} failed: {e}")
         raise RuntimeError("None of the known 1337x mirrors returned a real torrent listing.")
 
     def get_num_pages(self):
-        link = f"{self.mirror_base}/user/johncena141/1/"
+        link = f"{self.mirror_base}{self.url_pattern.format(page=1)}"
         page = self.session.get(link, timeout=15)
         if page.status_code != 200:
             raise RuntimeError(f"1337x returned HTTP {page.status_code}")
@@ -188,9 +201,11 @@ class JohnCena141Scraper:
         if last_page_element is not None:
             href = last_page_element.find("a")
             if href and href.get("href"):
-                match = re.findall(r"/user/johncena141/([0-9]+)/", href["href"])
-                if match:
-                    return int(match[0])
+                # extract the trailing page number regardless of which
+                # URL pattern is active
+                tail = href["href"].rstrip("/").rsplit("/", 1)[-1]
+                if tail.isdigit():
+                    return int(tail)
         return 9999
 
     def _scrape_single_torrent(self, url):
@@ -243,7 +258,7 @@ class JohnCena141Scraper:
             if self.start_page_num >= self.page_limit:
                 break
 
-            page_url = f"{self.mirror_base}/user/johncena141/{self.start_page_num}/"
+            page_url = f"{self.mirror_base}{self.url_pattern.format(page=self.start_page_num)}"
             page_resp = None
             
             for attempt in range(1, MAX_RETRIES_PER_PAGE + 1):
@@ -313,7 +328,7 @@ class JohnCena141Scraper:
         consecutive_empty_pages = 0
 
         while True:
-            page_url = f"{self.mirror_base}/user/johncena141/{page_num}/"
+            page_url = f"{self.mirror_base}{self.url_pattern.format(page=page_num)}"
             page_resp = None
 
             for attempt in range(1, MAX_RETRIES_PER_PAGE + 1):

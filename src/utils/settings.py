@@ -75,7 +75,10 @@ def get_latest_release():
         g = Github()
         latest_release = g.get_repo("MustafaSofi/Kane141").get_latest_release()
         link = latest_release.url
-        return latest_release.name, link
+        # use the tag (e.g. "v1.2.0"), not the release title -- the title
+        # is free-text and basically never matches the bare version string,
+        # which was causing a false "new version" notice on every launch
+        return latest_release.tag_name, link
     except Exception as e:
         print(f"Could not check for latest release: {e}")
         return None, None

@@ -62,7 +62,9 @@ class MainScreen(MDScreen):
         
         latest_release = get_latest_release()
         if latest_release[0] is not None:
-            if latest_release[0] != self.version:
+            remote_version = latest_release[0].strip().lstrip("vV")
+            local_version = self.version.strip().lstrip("vV")
+            if remote_version != local_version:
                 toast(f"New Release Availble: {latest_release[0]}\n{latest_release[1]}", duration=5.0)
         
         
