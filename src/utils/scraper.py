@@ -83,8 +83,8 @@ HEADERS = {
 }
 
 MIRRORS = [
-    "https://www.1337xx.to",
     "https://www.1337x.to",
+    "https://www.1337xx.to",
     "https://1377x.to",
     "https://1337x.pro",
     "https://x1337x.ws",
